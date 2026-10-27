@@ -536,14 +536,14 @@
             </div>
             <div class="control-group">
                 <label style="font-size:13px">🏫 ห้อง:</label>
-                <select id="room-select" class="picker" onchange="loadData()"></select>
-                <button class="icon-btn" onclick="addRoom()" title="เพิ่มห้อง">➕</button>
-                <button class="icon-btn" onclick="openPrompt('แก้ไขชื่อห้องเรียน','ชื่อห้องเรียน',saveRoomName,()=>roomNames[currentRoom])">✏️</button>
-                <button class="icon-btn del" onclick="confirmDeleteRoom()" title="ลบห้อง">🗑️</button>
-            </div>
-            <button class="btn btn-outline" style="background:rgba(255,255,255,0.15);color:white;border-color:rgba(255,255,255,0.4)" onclick="openBackupModal()">💾 Backup / Export</button>
-        </div>
-    </header>
+              function ensureRoomStructures() {
+    for (const k of Object.keys(roomNames)) {
+        if (!rosters[k])   rosters[k]   = [];
+        if (!scoreCols[k]) scoreCols[k] = ['1','2','3'];
+        if (!allScores[k]) allScores[k] = {};
+        if (!examCols[k])  examCols[k]  = { midterm:'กลางภาค', final:'ปลายภาค' };
+    }
+}
 
     <div class="tabs no-print">
         <button class="tab-btn active" id="btn-tab-att" onclick="switchTab('att')">📋 เช็คชื่อเข้าเรียน</button>
@@ -2334,7 +2334,7 @@ window.onload = () => {
             if (data.currentTeacherName) currentTeacherName = data.currentTeacherName;
         }
         
-        ensureRoomStructures();s
+        ensureRoomStructures();
         init(); // เรียกฟังก์ชันเริ่มต้นระบบ
         showToast('✅ โหลดข้อมูลออนไลน์สำเร็จ');
 
