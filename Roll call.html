@@ -8,6 +8,10 @@
     
     <!-- โหลดไลบรารีอ่านและเขียนไฟล์ Excel -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+    
+    <!-- โหลดไลบรารี Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
 
     <style>
         :root {
@@ -770,13 +774,13 @@
         <div class="backup-grid">
             <div class="backup-card" onclick="doBackup()">
                 <div class="bc-icon">📦</div>
-                <h4>Backup ข้อมูลทั้งหมด</h4>
-                <p>บันทึกไฟล์ JSON ครอบคลุมทุกห้องและทุกวัน</p>
+                <h4>Backup แบบ Local</h4>
+                <p>ดาวน์โหลดไฟล์ JSON เก็บไว้ในเครื่อง</p>
             </div>
             <div class="backup-card" onclick="doRestore()">
                 <div class="bc-icon">♻️</div>
                 <h4>Restore จาก Backup</h4>
-                <p>โหลดไฟล์ JSON ที่เคย backup ไว้</p>
+                <p>โหลดไฟล์ JSON ทับข้อมูลออนไลน์</p>
             </div>
             <div class="backup-card" onclick="openExportAttModal()">
                 <div class="bc-icon">📋</div>
@@ -798,6 +802,25 @@
 
 <script>
 // =============================================
+// FIREBASE CONFIG & STORAGE
+// =============================================
+// ⚠️ สำคัญมาก: คุณต้องเอาค่า Config จากโปรเจกต์ Firebase ของคุณมาใส่ตรงนี้ ⚠️
+const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+    databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT_ID.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId: "YOUR_APP_ID"
+};
+
+// เริ่มต้นการเชื่อมต่อ Firebase
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const dbRef = db.ref('student_management');
+
+// =============================================
 // ข้อมูลวันหยุด (Holiday Info)
 // =============================================
 const THAI_HOLIDAYS = {
@@ -818,7 +841,6 @@ const THAI_HOLIDAYS = {
     "12-31": "วันสิ้นปี"
 };
 
-// วันหยุดชดเชยหรือวันสำคัญทางศาสนาแบบคร่าวๆ (2024-2026)
 const LUNAR_HOLIDAYS = {
     "2024-02-24": "วันมาฆบูชา", "2024-05-22": "วันวิสาขบูชา", "2024-07-20": "วันอาสาฬหบูชา", "2024-07-21": "วันเข้าพรรษา",
     "2025-02-13": "วันมาฆบูชา", "2025-05-11": "วันวิสาขบูชา", "2025-07-10": "วันอาสาฬหบูชา", "2025-07-11": "วันเข้าพรรษา",
@@ -827,15 +849,11 @@ const LUNAR_HOLIDAYS = {
 
 function checkHoliday(dateStr) {
     if (!dateStr) return "";
-    const md = dateStr.substring(5); // เอาเฉพาะ MM-DD
+    const md = dateStr.substring(5);
     
-    // ตรวจสอบวันหยุดตามวันที่ตายตัวก่อน
     if (THAI_HOLIDAYS[md]) return THAI_HOLIDAYS[md];
-    
-    // ตรวจสอบวันหยุดชดเชยหรือทางศาสนาตามปี
     if (LUNAR_HOLIDAYS[dateStr]) return LUNAR_HOLIDAYS[dateStr];
     
-    // ตรวจสอบเสาร์-อาทิตย์
     const d = new Date(dateStr);
     if (d.getDay() === 0 || d.getDay() === 6) return "วันหยุดสุดสัปดาห์";
     
@@ -848,20 +866,19 @@ function checkHoliday(dateStr) {
 const defaultRooms   = { room1: 'มัธยมชั้น 3/3', room2: 'มัธยมชั้น 4/1' };
 const initialRosters = { room1: [{ id:1, studentId: '65001', name:'เด็กชาย สมชาย รักเรียน', status_class:'pending', status_assembly:'pending' }], room2: [] };
 
-let roomNames     = load('roomNames_v1')         || JSON.parse(JSON.stringify(defaultRooms));
-let rosters       = load('customRosters_v3')     || JSON.parse(JSON.stringify(initialRosters));
-let allRecords    = load('attendanceRecords_v3') || {};
-let scoreCols     = load('scoreColumns_v1')      || {};
-let allScores     = load('studentScores_v2')     || {};
-let examCols      = load('examColumns_v1')       || {};
-let currentTeacherName = localStorage.getItem('teacherName_v1') || 'ยังไม่ระบุชื่อ';
+let roomNames      = JSON.parse(JSON.stringify(defaultRooms));
+let rosters        = JSON.parse(JSON.stringify(initialRosters));
+let allRecords     = {};
+let scoreCols      = {};
+let allScores      = {};
+let examCols       = {};
+let currentTeacherName = 'ยังไม่ระบุชื่อ';
 
 let students = [];
 let currentDate = '';
 let currentRoom = '';
 let draggedId = null;
 
-// Ensure all rooms have default structures
 function ensureRoomStructures() {
     for (const k of Object.keys(roomNames)) {
         if (!rosters[k])   rosters[k]   = [];
@@ -870,24 +887,25 @@ function ensureRoomStructures() {
         if (!examCols[k])  examCols[k]  = { midterm:'กลางภาค', final:'ปลายภาค' };
     }
 }
-ensureRoomStructures();
 
 // =============================================
-// STORAGE HELPERS
+// STORAGE HELPERS (ส่งข้อมูลขึ้น Firebase)
 // =============================================
-function load(key) {
-    try { return JSON.parse(localStorage.getItem(key)); } catch(e) { return null; }
-}
 function save(key, val) {
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) { showToast('⚠️ พื้นที่จัดเก็บเต็ม'); }
+    dbRef.child(key).set(val).catch(err => {
+        console.error(err);
+        showToast('⚠️ เกิดข้อผิดพลาดในการบันทึกออนไลน์');
+    });
 }
+
 function saveAll() {
-    save('roomNames_v1', roomNames);
-    save('customRosters_v3', rosters);
-    save('attendanceRecords_v3', allRecords);
-    save('scoreColumns_v1', scoreCols);
-    save('studentScores_v2', allScores);
-    save('examColumns_v1', examCols);
+    save('roomNames', roomNames);
+    save('rosters', rosters);
+    save('allRecords', allRecords);
+    save('scoreCols', scoreCols);
+    save('allScores', allScores);
+    save('examCols', examCols);
+    save('currentTeacherName', currentTeacherName);
 }
 
 // =============================================
@@ -981,14 +999,14 @@ function addRoom() {
 
 function saveRoomName(name) {
     roomNames[currentRoom] = name;
-    save('roomNames_v1', roomNames);
+    save('roomNames', roomNames);
     updateRoomDropdowns();
     showToast('✅ แก้ไขชื่อห้องสำเร็จ');
 }
 
 function saveTeacherName(name) {
     currentTeacherName = name;
-    localStorage.setItem('teacherName_v1', name);
+    save('currentTeacherName', name);
     document.getElementById('teacher-name-display').textContent = name;
     showToast('✅ บันทึกชื่อผู้สอนสำเร็จ');
 }
@@ -1005,7 +1023,9 @@ function confirmDeleteRoom() {
             delete scoreCols[currentRoom];
             delete allScores[currentRoom];
             delete examCols[currentRoom];
-            for (const d in allRecords) delete allRecords[d][currentRoom];
+            for (const d in allRecords) {
+                if (allRecords[d]) delete allRecords[d][currentRoom];
+            }
             saveAll();
             updateRoomDropdowns();
             loadData();
@@ -1032,7 +1052,6 @@ function loadData() {
     currentRoom = document.getElementById('room-select').value;
     if (!currentRoom) return;
 
-    // เช็คและแสดงวันหยุดข้างๆ ปฏิทิน
     const holidayName = checkHoliday(currentDate);
     const holidayIndicator = document.getElementById('holiday-indicator');
     if (holidayName) {
@@ -1052,15 +1071,14 @@ function loadData() {
         ? JSON.parse(JSON.stringify(allRecords[currentDate][currentRoom]))
         : JSON.parse(JSON.stringify(rosters[currentRoom]));
 
-    // อัปเดตโครงสร้างข้อมูลให้รองรับการแยกสถานะเข้าเรียน/เข้าแถว หากเป็นข้อมูลเก่า
     students.forEach(s => {
         if (s.status !== undefined && s.status_class === undefined) {
-            s.status_class = s.status; // ย้ายสถานะเก่าไปที่ status_class
+            s.status_class = s.status;
             delete s.status;
         }
         if (!s.status_class) s.status_class = 'pending';
         if (!s.status_assembly) s.status_assembly = 'pending';
-        if (s.studentId === undefined) s.studentId = ''; // รองรับฟิลด์รหัสนักศึกษาใหม่
+        if (s.studentId === undefined) s.studentId = ''; 
     });
 
     document.getElementById('select-all').checked = false;
@@ -1178,7 +1196,6 @@ function saveBulkStudents() {
         let sName = line;
         let sCode = '';
 
-        // ค้นหารหัสนักศึกษาที่อาจจะอยู่หน้าชื่อ (เช่น 65001 นายสมชาย)
         const match = line.match(/^([\w-]{4,})\s+(.+)$/);
         if (match && !isNaN(parseInt(match[1]))) {
             sCode = match[1];
@@ -1188,6 +1205,7 @@ function saveBulkStudents() {
         const newS = { id: sid, studentId: sCode, name: sName, status_class: 'pending', status_assembly: 'pending' };
         rosters[currentRoom].push(newS);
         if (allRecords[currentDate]?.[currentRoom]) allRecords[currentDate][currentRoom].push({ ...newS });
+        if(!allScores[currentRoom]) allScores[currentRoom] = {};
         allScores[currentRoom][sid] = { assigns: Array(scoreCols[currentRoom].length).fill(''), midterm:'', final:'' };
     });
 
@@ -1356,7 +1374,6 @@ function badgeHtml(status, reason) {
     const [cls, lbl] = map[status] || ['badge-pending','รอเช็คชื่อ'];
     let html = `<span class="badge ${cls}">${lbl}</span>`;
     
-    // ถ้ามีสถานะเป็น ลา และมีสาเหตุให้แสดงผลกำกับไว้
     if (status === 'leave' && reason) {
         html += `<div style="font-size:11px; color:var(--muted); margin-top:4px;">💬 ${reason}</div>`;
     }
@@ -1369,7 +1386,6 @@ function renderAttTable() {
     tbody.innerHTML = '';
     let present = 0, leave = 0, absent = 0, late = 0;
     
-    // ดึงประเภทการเช็คชื่อว่ากำลังดูเข้าเรียนหรือเข้าแถว
     const attType = document.getElementById('att-type-select').value;
 
     if (!students.length) {
@@ -1377,8 +1393,8 @@ function renderAttTable() {
     }
 
     students.forEach((s, idx) => {
-        const st = s[attType]; // ดึงสถานะตามประเภทที่เลือก
-        const reason = s[`${attType}_reason`] || ''; // ดึงสาเหตุการลา
+        const st = s[attType]; 
+        const reason = s[`${attType}_reason`] || ''; 
 
         if (st === 'present') present++;
         else if (st === 'leave') leave++;
@@ -1435,7 +1451,7 @@ function renderAttTable() {
 
     if (!allRecords[currentDate]) allRecords[currentDate] = {};
     allRecords[currentDate][currentRoom] = students;
-    save('attendanceRecords_v3', allRecords);
+    save('allRecords', allRecords);
 }
 
 function promptLeave(idx) {
@@ -1450,12 +1466,9 @@ function promptLeave(idx) {
 function markOne(idx, status) {
     const attType = document.getElementById('att-type-select').value;
     students[idx][attType] = status;
-    
-    // เคลียร์สาเหตุการลาทิ้ง หากถูกเปลี่ยนสถานะเป็นอย่างอื่นที่ไม่ใช่การลา
     if (status !== 'leave') {
         students[idx][`${attType}_reason`] = '';
     }
-    
     renderAttTable();
 }
 
@@ -1547,11 +1560,11 @@ function confirmReset() {
 function addScoreCol() {
     openPrompt('เพิ่มช่องคะแนนเก็บ', 'ชื่อช่องคะแนน', (name) => {
         scoreCols[currentRoom].push(name);
-        save('scoreColumns_v1', scoreCols);
+        save('scoreCols', scoreCols);
         for (const sid in allScores[currentRoom]) {
             if (allScores[currentRoom][sid].assigns) allScores[currentRoom][sid].assigns.push('');
         }
-        save('studentScores_v2', allScores);
+        save('allScores', allScores);
         renderScoreTable();
         showToast('✅ เพิ่มช่องคะแนนสำเร็จ');
     }, () => `ครั้งที่ ${scoreCols[currentRoom].length + 1}`);
@@ -1560,7 +1573,7 @@ function addScoreCol() {
 function renameScoreCol(i) {
     openPrompt('แก้ไขชื่อช่องคะแนน', 'ชื่อช่อง', (name) => {
         scoreCols[currentRoom][i] = name;
-        save('scoreColumns_v1', scoreCols);
+        save('scoreCols', scoreCols);
         renderScoreTable();
     }, () => scoreCols[currentRoom][i]);
 }
@@ -1569,10 +1582,10 @@ function deleteScoreCol(i) {
     const name = scoreCols[currentRoom][i];
     openConfirm(`ลบช่องคะแนน "<strong>${name}</strong>"?`, '⚠️ คะแนนในช่องนี้ของทุกคนจะหายถาวร', '', '❌', () => {
         scoreCols[currentRoom].splice(i, 1);
-        save('scoreColumns_v1', scoreCols);
+        save('scoreCols', scoreCols);
         for (const sid in allScores[currentRoom])
             allScores[currentRoom][sid].assigns?.splice(i, 1);
-        save('studentScores_v2', allScores);
+        save('allScores', allScores);
         renderScoreTable();
         showToast(`🗑️ ลบช่อง "${name}" แล้ว`);
     });
@@ -1581,7 +1594,7 @@ function deleteScoreCol(i) {
 function renameExamCol(type) {
     openPrompt('แก้ไขชื่อช่องสอบ', 'ชื่อช่อง (ระบุคะแนนเต็มได้ เช่น กลางภาค (20))', (name) => {
         examCols[currentRoom][type] = name;
-        save('examColumns_v1', examCols);
+        save('examCols', examCols);
         renderScoreTable();
     }, () => examCols[currentRoom][type]);
 }
@@ -1593,7 +1606,7 @@ function bulkAssignScore(colIdx) {
                 allScores[currentRoom][s.id] = { assigns: Array(scoreCols[currentRoom].length).fill(''), midterm:'', final:'' };
             allScores[currentRoom][s.id].assigns[colIdx] = val;
         });
-        save('studentScores_v2', allScores);
+        save('allScores', allScores);
         renderScoreTable();
         showToast('⚡ กรอกคะแนนทุกคนสำเร็จ');
     });
@@ -1607,13 +1620,12 @@ function bulkExamScore(type) {
                 allScores[currentRoom][s.id] = { assigns: Array(scoreCols[currentRoom].length).fill(''), midterm:'', final:'' };
             allScores[currentRoom][s.id][type] = val;
         });
-        save('studentScores_v2', allScores);
+        save('allScores', allScores);
         renderScoreTable();
         showToast('⚡ กรอกคะแนนทุกคนสำเร็จ');
     });
 }
 
-// ฟังก์ชันสำหรับคำนวณเกรดตามช่วงคะแนน
 function calculateGrade(total) {
     if (total >= 80) return "4";
     if (total >= 75) return "3.5";
@@ -1651,7 +1663,7 @@ function renderScoreTable() {
             </div></div>
         </th>
         <th rowspan="2">รวม</th>
-        <th rowspan="2" style="background:#EBF2EC; color:#3F5E41;">เกรด</th> <!-- เพิ่มคอลัมน์เกรด -->
+        <th rowspan="2" style="background:#EBF2EC; color:#3F5E41;">เกรด</th>
     </tr><tr>`;
 
     if (!cols.length) h += `<th>-</th>`;
@@ -1682,7 +1694,7 @@ function renderScoreTable() {
         const mid = parseFloat(sc.midterm) || 0;
         const fin = parseFloat(sc.final)   || 0;
         const tot = assignSum + mid + fin;
-        const grade = calculateGrade(tot); // คำนวณเกรด
+        const grade = calculateGrade(tot); 
 
         h += `<tr>
             <td class="sticky-col sticky-id">${student.id}</td>
@@ -1699,7 +1711,7 @@ function renderScoreTable() {
             <td><input type="number" class="score-input wide" value="${sc.midterm}" onchange="updateScore(${student.id},'midterm',0,this.value)"></td>
             <td><input type="number" class="score-input wide" value="${sc.final}"   onchange="updateScore(${student.id},'final',0,this.value)"></td>
             <td class="score-total" id="tot-${student.id}">${tot}</td>
-            <td style="font-weight:bold; color:var(--success);" id="grade-${student.id}">${grade}</td> <!-- แสดงเกรดตรงนี้ -->
+            <td style="font-weight:bold; color:var(--success);" id="grade-${student.id}">${grade}</td> 
         </tr>`;
     });
 
@@ -1707,12 +1719,11 @@ function renderScoreTable() {
     wrap.innerHTML = h;
 }
 
-// อัปเดตฟังก์ชัน updateScore ให้คำนวณและแสดงเกรดทันทีเมื่อมีการแก้คะแนน
 function updateScore(sid, type, idx, val) {
     const sc = allScores[currentRoom][sid];
     if (type === 'assign') sc.assigns[idx] = val;
     else sc[type] = val;
-    save('studentScores_v2', allScores);
+    save('allScores', allScores);
 
     const assignSum = sc.assigns.reduce((acc,v) => acc + (parseFloat(v)||0), 0);
     const mid = parseFloat(sc.midterm)||0;
@@ -1721,7 +1732,7 @@ function updateScore(sid, type, idx, val) {
     
     document.getElementById(`sum-${sid}`).textContent = assignSum;
     document.getElementById(`tot-${sid}`).textContent = tot;
-    document.getElementById(`grade-${sid}`).textContent = calculateGrade(tot); // อัปเดตเกรดแบบเรียลไทม์
+    document.getElementById(`grade-${sid}`).textContent = calculateGrade(tot); 
 }
 
 // =============================================
@@ -1741,7 +1752,6 @@ function renderSummaryTable() {
     const stats = {};
     rosters[room].forEach(s => stats[s.id] = { name: s.name, studentId: s.studentId, present:0, leave:0, absent:0, late:0 });
 
-    // รวบรวมข้อมูลให้อ้างอิงแค่วันละ 1 ชุด ป้องกันการนับเบิ้ลจากคีย์ "(เข้าเรียน)", "(เข้าแถว)"
     const uniqueRecordsByDate = {};
     for (const d in allRecords) {
         const cleanDate = d.substring(0, 10); 
@@ -1809,14 +1819,12 @@ function viewStudentSummary(sid) {
         if(recs) {
             const sData = recs.find(r => r.id === sid);
             if(sData) {
-                // ข้อมูลเข้าเรียน
                 const stC = sData.status_class || sData.status;
                 if(stC==='present') presentClass++;
                 if(stC==='leave') leaveClass++;
                 if(stC==='absent') absentClass++;
                 if(stC==='late') lateClass++;
 
-                // ข้อมูลเข้าแถว
                 const stA = sData.status_assembly || (sData.status_class === undefined ? sData.status : 'pending');
                 if(stA==='present') presentAssm++;
                 if(stA==='leave') leaveAssm++;
@@ -1826,14 +1834,12 @@ function viewStudentSummary(sid) {
         }
     }
 
-    // ข้อมูลคะแนน
     const sc = allScores[currentRoom][sid] || { assigns:[], midterm:'', final:'' };
     const assignSum = sc.assigns.reduce((a,v) => a + (parseFloat(v)||0), 0);
     const mid = parseFloat(sc.midterm)||0;
     const fin = parseFloat(sc.final)||0;
     const tot = assignSum + mid + fin;
     
-    // คำนวณเกรดจากคะแนนรวมทั้งหมด
     const grade = calculateGrade(tot);
 
     document.getElementById('student-summary-title').textContent = `📊 สรุปข้อมูล: ${student.name} (รหัส: ${student.studentId || '-'})`;
@@ -1914,13 +1920,8 @@ function viewStudentSummary(sid) {
 // =============================================
 // PRINT
 // =============================================
-function printAttendance() {
-    window.print();
-}
-
-function printSummary() {
-    window.print();
-}
+function printAttendance() { window.print(); }
+function printSummary() { window.print(); }
 
 // =============================================
 // BACKUP / RESTORE / EXPORT
@@ -1931,7 +1932,7 @@ function doBackup() {
     const data = {
         version: 3,
         exportedAt: new Date().toISOString(),
-        roomNames, rosters, allRecords, scoreCols, allScores, examCols
+        roomNames, rosters, allRecords, scoreCols, allScores, examCols, currentTeacherName
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type:'application/json' });
     const url  = URL.createObjectURL(blob);
@@ -1940,13 +1941,13 @@ function doBackup() {
     a.download = `student-backup-${new Date().toISOString().slice(0,10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast('📦 Backup สำเร็จ');
+    showToast('📦 Backup เป็นไฟล์สำเร็จ');
 }
 
 function doRestore() {
     openConfirm(
-        'โหลด Backup ทับข้อมูลปัจจุบัน?',
-        '⚠️ ข้อมูลปัจจุบันจะถูกแทนที่ด้วยข้อมูลจากไฟล์ backup',
+        'โหลด Backup ทับข้อมูลทั้งหมด?',
+        '⚠️ ข้อมูลออนไลน์ปัจจุบันจะถูกแทนที่ด้วยข้อมูลจากไฟล์ backup',
         '', '♻️', () => {
             document.getElementById('restore-file-input').click();
         }, 'เลือกไฟล์', 'btn-primary'
@@ -1967,11 +1968,13 @@ function doRestoreFile(input) {
             scoreCols  = data.scoreCols  || {};
             allScores  = data.allScores  || {};
             examCols   = data.examCols   || {};
+            if(data.currentTeacherName) currentTeacherName = data.currentTeacherName;
+            
             saveAll();
             updateRoomDropdowns();
             loadData();
             closeModal('modal-backup');
-            showToast('✅ Restore สำเร็จ');
+            showToast('✅ Restore ไฟล์ขึ้นระบบออนไลน์สำเร็จ');
         } catch(err) {
             showToast('❌ ไฟล์ไม่ถูกต้อง: ' + err.message);
         }
@@ -1980,11 +1983,9 @@ function doRestoreFile(input) {
     input.value = '';
 }
 
-// ฟังก์ชันเปิด Modal สำหรับตั้งค่า Export เช็คชื่อ
 function openExportAttModal() {
-    closeModal('modal-backup'); // ปิด Modal Backup ก่อน
+    closeModal('modal-backup'); 
     
-    // ตั้งค่า Default วันที่เริ่มต้น-สิ้นสุด
     const dates = Object.keys(allRecords).map(d => d.substring(0, 10)).sort();
     if(dates.length > 0) {
         document.getElementById('export-start-date').value = dates[0];
@@ -2014,19 +2015,16 @@ function executeExportAttExcel() {
     const start = new Date(startDateStr);
     const end = new Date(endDateStr);
 
-    // ดึงวันที่ทั้งหมดและกำจัดคีย์ที่มี (เข้าเรียน), (เข้าแถว) ออก ให้เหลือแต่วันที่เปล่าๆ ไม่ซ้ำกัน (ตัด 10 ตัวแรก YYYY-MM-DD)
     const rawDates = Object.keys(allRecords);
     let uniqueDates = [...new Set(rawDates.map(d => d.substring(0, 10)))].sort();
 
-    // กรองวันที่ตามช่วงที่เลือก
     uniqueDates = uniqueDates.filter(d => {
         const current = new Date(d);
         if (current < start || current > end) return false;
         
-        // กรองเสาร์-อาทิตย์ ถ้าผู้ใช้ติ๊กเลือก
         if (excludeWeekend) {
             const day = current.getDay();
-            if (day === 0 || day === 6) return false; // 0 = อาทิตย์, 6 = เสาร์
+            if (day === 0 || day === 6) return false; 
         }
         
         return true;
@@ -2049,7 +2047,6 @@ function executeExportAttExcel() {
     const rows = roomStudents.map(s => {
         const row = [s.id, s.studentId || '-', s.name];
         uniqueDates.forEach(cleanDate => {
-            // ค้นหาข้อมูลของวันนั้น โดยหาจากคีย์ที่ถูกต้องก่อน ถ้าไม่เจอให้หาจากคีย์เก่าๆ ที่เป็นไปได้
             let rec = allRecords[cleanDate]?.[currentRoom]?.find(r => r.id === s.id);
             if (!rec) {
                 rec = allRecords[`${cleanDate} (เข้าเรียน)`]?.[currentRoom]?.find(r => r.id === s.id) ||
@@ -2153,7 +2150,6 @@ function exportScoreExcel() {
     const cols = scoreCols[currentRoom] || [];
     const ec   = examCols[currentRoom]  || { midterm:'กลางภาค', final:'ปลายภาค' };
     
-    // เพิ่ม "เกรด" ลงไปใน Header ของ Excel
     const headers = ['เลขที่','รหัสประจำตัว','ชื่อ-นามสกุล',...cols, 'รวมเก็บ', ec.midterm, ec.final, 'รวม', 'เกรด'];
 
     const rows = roomStudents.map(s => {
@@ -2163,8 +2159,8 @@ function exportScoreExcel() {
         const mid = parseFloat(sc.midterm)||0;
         const fin = parseFloat(sc.final)||0;
         const tot = assignSum + mid + fin;
-        const grade = calculateGrade(tot); // นำเกรดมาใส่
-        return [s.id, s.studentId || '-', s.name, ...assigns, assignSum, sc.midterm, sc.final, tot, grade]; // ใส่เกรดต่อท้ายสุด
+        const grade = calculateGrade(tot); 
+        return [s.id, s.studentId || '-', s.name, ...assigns, assignSum, sc.midterm, sc.final, tot, grade]; 
     });
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -2192,7 +2188,7 @@ function exportScoreExcel() {
     }
     
     ws['!cols'] = [{ wch: 8 }, { wch: 15 }, { wch: 30 }];
-    for(let i=0; i<cols.length+5; i++) ws['!cols'].push({wch: 10}); // เผื่อความกว้างให้คอลัมน์เกรดด้วย
+    for(let i=0; i<cols.length+5; i++) ws['!cols'].push({wch: 10}); 
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'คะแนน');
@@ -2223,7 +2219,7 @@ function handleExcelImport(event) {
             let nameColIdx = -1;
             let lastNameColIdx = -1;
             let titleColIdx = -1;
-            let studentIdColIdx = -1; // เพิ่มตัวแปรสำหรับหาคอลัมน์รหัส
+            let studentIdColIdx = -1; 
             let startRow = 0;
 
             for (let i = 0; i < Math.min(15, jsonData.length); i++) {
@@ -2232,7 +2228,6 @@ function handleExcelImport(event) {
                     let cellStr = String(row[j]).trim().replace(/\s+/g, '');
                     if (!cellStr) continue;
                     
-                    // หาคอลัมน์รหัสนักศึกษา/เลขประจำตัว
                     if (cellStr.includes('รหัส') || cellStr.toLowerCase() === 'id' || cellStr.includes('เลขประจำตัว')) {
                         studentIdColIdx = j;
                     }
@@ -2321,22 +2316,46 @@ function handleExcelImport(event) {
 }
 
 // =============================================
-// INIT EVENT LISTENERS
+// INIT EVENT LISTENERS & โหลดข้อมูลจาก Firebase
 // =============================================
 window.onload = () => {
-    init(); 
+    showToast('กำลังโหลดข้อมูลออนไลน์...', 5000);
     
-    document.getElementById('prompt-input').addEventListener('keypress', e => {
-        if (e.key === 'Enter') document.getElementById('prompt-ok-btn').click();
-    });
+    // ดึงข้อมูลทั้งหมดจาก Firebase 1 ครั้งตอนเปิดเว็บ
+    dbRef.once('value').then((snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+            if (data.roomNames) roomNames = data.roomNames;
+            if (data.rosters) rosters = data.rosters;
+            if (data.allRecords) allRecords = data.allRecords;
+            if (data.scoreCols) scoreCols = data.scoreCols;
+            if (data.allScores) allScores = data.allScores;
+            if (data.examCols) examCols = data.examCols;
+            if (data.currentTeacherName) currentTeacherName = data.currentTeacherName;
+        }
+        
+        ensureRoomStructures();s
+        init(); // เรียกฟังก์ชันเริ่มต้นระบบ
+        showToast('✅ โหลดข้อมูลออนไลน์สำเร็จ');
 
-    // Close modal on overlay click
-    document.querySelectorAll('.modal-overlay').forEach(overlay => {
-        overlay.addEventListener('click', e => {
-            if (e.target === overlay) overlay.classList.remove('open');
+        // ผูก Event Listeners ที่จำเป็น
+        document.getElementById('prompt-input').addEventListener('keypress', e => {
+            if (e.key === 'Enter') document.getElementById('prompt-ok-btn').click();
         });
+
+        // ปิด modal เมื่อคลิกพื้นที่ว่าง
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', e => {
+                if (e.target === overlay) overlay.classList.remove('open');
+            });
+        });
+    }).catch(e => {
+        console.error(e);
+        showToast('⚠️ ไม่สามารถเชื่อมต่อฐานข้อมูลได้ ใช้ข้อมูลเริ่มต้น');
+        ensureRoomStructures();
+        init(); 
     });
 };
 </script>
 </body>
-</html>ทำให้สามารถเพิ่มข้อคะแนนเก็บได้  5 ช่อง และข้อสอบอีก 5 ช่อง กลางภาค ปลายภาค และแก้ไขชื่อช่องคะแนนได้ แล้วก็ถ้าอันไหนไม่ได้ใส่ก็คือไม่เอา แล้วก็ให้สามารถเพิ่มช่องเกรดได้ แบบที่เอาเกรดที่คำนวณมาแก้ได้ แต่ขอให้แก้แค่บางคน เช่นคนติด 0 แต่มาซ่อมแล้วแก้เป็น 1
+</html>
