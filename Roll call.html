@@ -536,14 +536,14 @@
             </div>
             <div class="control-group">
                 <label style="font-size:13px">🏫 ห้อง:</label>
-              function ensureRoomStructures() {
-    for (const k of Object.keys(roomNames)) {
-        if (!rosters[k])   rosters[k]   = [];
-        if (!scoreCols[k]) scoreCols[k] = ['1','2','3'];
-        if (!allScores[k]) allScores[k] = {};
-        if (!examCols[k])  examCols[k]  = { midterm:'กลางภาค', final:'ปลายภาค' };
-    }
-}
+                <select id="room-select" class="picker" onchange="loadData()"></select>
+                <button class="icon-btn" onclick="addRoom()" title="เพิ่มห้อง">➕</button>
+                <button class="icon-btn" onclick="openPrompt('แก้ไขชื่อห้องเรียน','ชื่อห้องเรียน',saveRoomName,()=>roomNames[currentRoom])">✏️</button>
+                <button class="icon-btn del" onclick="confirmDeleteRoom()" title="ลบห้อง">🗑️</button>
+            </div>
+            <button class="btn btn-outline" style="background:rgba(255,255,255,0.15);color:white;border-color:rgba(255,255,255,0.4)" onclick="openBackupModal()">💾 Backup / Export</button>
+        </div>
+    </header>
 
     <div class="tabs no-print">
         <button class="tab-btn active" id="btn-tab-att" onclick="switchTab('att')">📋 เช็คชื่อเข้าเรียน</button>
@@ -2320,30 +2320,71 @@ function handleExcelImport(event) {
 // =============================================
 window.onload = () => {
     showToast('กำลังโหลดข้อมูลออนไลน์...', 5000);
-    
+
+    let isInit = false;
+    const forceInit = () => {
+        if (isInit) return;
+        isInit = true;
+        ensureRoomStructures();
+        init();
+    };
+
+    // 1. ป้องกันระบบค้าง (Timeout 3 วินาที) ถ้ายังไม่ได้ตั้งค่า Firebase จะสลับไปใช้ Offline 
+    setTimeout(() => {
+        if (!isInit) {
+            showToast('⚠️ เชื่อมต่อฐานข้อมูลช้า ใช้โหมด Offline ชั่วคราว', 3000);
+            forceInit();
+        }
+    }, 3000);
+
     // ดึงข้อมูลทั้งหมดจาก Firebase 1 ครั้งตอนเปิดเว็บ
     dbRef.once('value').then((snapshot) => {
         const data = snapshot.val();
         if (data) {
             if (data.roomNames) roomNames = data.roomNames;
-            if (data.rosters) rosters = data.rosters;
-            if (data.allRecords) allRecords = data.allRecords;
-            if (data.scoreCols) scoreCols = data.scoreCols;
-            if (data.allScores) allScores = data.allScores;
             if (data.examCols) examCols = data.examCols;
             if (data.currentTeacherName) currentTeacherName = data.currentTeacherName;
-        }
-        
-        ensureRoomStructures();
-        init(); // เรียกฟังก์ชันเริ่มต้นระบบ
-        showToast('✅ โหลดข้อมูลออนไลน์สำเร็จ');
 
-        // ผูก Event Listeners ที่จำเป็น
+            // 2. ป้องกันบั๊ก Firebase แปลง Array เป็น Object เมื่อมีการลบข้อมูล
+            if (data.rosters) {
+                for (let k in data.rosters) {
+                    rosters[k] = Object.values(data.rosters[k] || {}).filter(Boolean);
+                }
+            }
+            if (data.allRecords) {
+                for (let d in data.allRecords) {
+                    for (let r in data.allRecords[d]) {
+                        data.allRecords[d][r] = Object.values(data.allRecords[d][r] || {}).filter(Boolean);
+                    }
+                }
+                allRecords = data.allRecords;
+            }
+            if (data.scoreCols) {
+                for (let k in data.scoreCols) {
+                    scoreCols[k] = Object.values(data.scoreCols[k] || {}).filter(Boolean);
+                }
+            }
+            if (data.allScores) {
+                for (let room in data.allScores) {
+                    for (let sid in data.allScores[room]) {
+                        if (data.allScores[room][sid].assigns) {
+                            data.allScores[room][sid].assigns = Object.values(data.allScores[room][sid].assigns);
+                        }
+                    }
+                }
+                allScores = data.allScores;
+            }
+        }
+
+        if (!isInit) {
+            showToast('✅ โหลดข้อมูลออนไลน์สำเร็จ');
+            forceInit();
+        }
+
+        // ผูก Event Listeners
         document.getElementById('prompt-input').addEventListener('keypress', e => {
             if (e.key === 'Enter') document.getElementById('prompt-ok-btn').click();
         });
-
-        // ปิด modal เมื่อคลิกพื้นที่ว่าง
         document.querySelectorAll('.modal-overlay').forEach(overlay => {
             overlay.addEventListener('click', e => {
                 if (e.target === overlay) overlay.classList.remove('open');
@@ -2352,8 +2393,7 @@ window.onload = () => {
     }).catch(e => {
         console.error(e);
         showToast('⚠️ ไม่สามารถเชื่อมต่อฐานข้อมูลได้ ใช้ข้อมูลเริ่มต้น');
-        ensureRoomStructures();
-        init(); 
+        forceInit();
     });
 };
 </script>
